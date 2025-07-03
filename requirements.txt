@@ -1,0 +1,27 @@
+# DO NOT include azure-functions-worker in this file
+# The Python Worker is managed by Azure Functions platform
+# Manually managing azure-functions-worker may cause unexpected issues
+
+# Azure Functions dependencies
+azure-functions
+azure-functions-durable
+
+# Database dependencies
+asyncpg
+psycopg2-binary
+
+# Azure Storage dependencies
+azure-storage-blob
+
+# Azure Service Bus dependencies
+azure-servicebus
+
+# Azure Core dependencies
+azure-core
+
+# HTTP client for Discord webhooks
+aiohttp
+
+# Date/time handling
+python-dateutil
+
