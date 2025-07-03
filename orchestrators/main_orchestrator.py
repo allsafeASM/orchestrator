@@ -15,7 +15,8 @@ def main_orchestrator(context: df.DurableOrchestrationContext):
         # Get input data from the HTTP trigger
         input_data = context.get_input()
         domain = input_data.get("domain")
-        scan_id = input_data.get("enum_scan_id")
+        enum_scan_id = input_data.get("enum_scan_id")
+        vuln_scan_id = input_data.get("vuln_scan_id", None)
         user_id = input_data.get("user_id")  # Add user_id requirement
         task_sequence = input_data.get("task_sequence") # Can be None if not provided
         
@@ -26,35 +27,19 @@ def main_orchestrator(context: df.DurableOrchestrationContext):
             return {"success": False, "error": error_msg}
         
         logging.info(f"=== MAIN ORCHESTRATOR STARTED ===")
-        logging.info(f"Scan ID: {scan_id}, Domain: {domain}, User ID: {user_id}, Tasks: {task_sequence or 'default'}")
+        logging.info(f"Scan IDs: [{enum_scan_id}, {vuln_scan_id}], Domain: {domain}, User ID: {user_id}, Tasks: {task_sequence or 'default'}")
         
         # Create the scan context object to hold state
         scan_context = ScanContext(
-            scan_id=scan_id,
+            enum_scan_id=enum_scan_id,
+            vuln_scan_id=vuln_scan_id,
             domain=domain,
             domain_id=input_data.get("domain_id"),
             user_id=user_id  # Add user_id to scan context
         )
         
         scan_context_dict = scan_context.to_dict()
-        
-        # --- START DEBUGGING STEP ---
-        # The purpose of this block is to find the exact value causing the serialization error.
-        try:
-            # Attempt to serialize the dictionary. If it contains a coroutine, this line will fail.
-            json.dumps(scan_context_dict)
-            logging.info("Serialization check passed for scan_context_dict.")
-        except TypeError as e:
-            # This catches the "Object of type coroutine is not JSON serializable" error.
-            logging.error("--- SERIALIZATION FAILED ---")
-            logging.error(f"ERROR: {e}")
-            logging.error("The dictionary created from ScanContext contains a non-serializable value (likely a coroutine).")
-            # This log will show you the exact dictionary and its values so you can find the problem.
-            logging.error(f"Problematic Dictionary Contents: {scan_context_dict}")
-            # Fail the orchestration immediately to prevent further issues.
-            raise Exception("Failed to serialize ScanContext. Check logs for details.")
-        # --- END DEBUGGING STEP ---
-        
+     
         # 1. Validate domain exists in database and belongs to user
         domain_validation_result = yield context.call_activity(
             "validate_domain", 
@@ -71,32 +56,51 @@ def main_orchestrator(context: df.DurableOrchestrationContext):
         scan_context.domain_id = domain_validation_result.get("domain_id")
         scan_context_dict["domain_id"] = scan_context.domain_id
         
-        # 2. Execute the main task pipeline
-        task_pipeline_input = {
+        # 2. Execute enumeration scan (subfinder, dns_resolve, port_scan, httpx)
+        logging.info("Starting enumeration scan...")
+        enum_scan_input = {
             "scan_context": scan_context_dict,
         }
-        if task_sequence:
-            task_pipeline_input["task_sequence"] = task_sequence
 
-        task_pipeline_result = yield context.call_sub_orchestrator(
-            "task_pipeline_orchestrator",
-            task_pipeline_input
+        enum_scan_result = yield context.call_sub_orchestrator(
+            "enumeration_scan_orchestrator",
+            enum_scan_input
         )
         
-        if not task_pipeline_result or task_pipeline_result.get("status") != "completed":
-            error_msg = f"Task pipeline failed or did not complete. Result: {task_pipeline_result}"
+        if not enum_scan_result or enum_scan_result.get("status") != "completed":
+            error_msg = f"Enumeration scan failed or did not complete. Result: {enum_scan_result}"
             logging.error(error_msg)
             return {"success": False, "error": error_msg}
+
+        # 3. Execute vulnerability scan (nuclei) if vuln_scan_id is provided
+        vuln_scan_result = None
+        if vuln_scan_id:
+            logging.info("Starting vulnerability scan...")
+            vuln_scan_input = {
+                "scan_context": scan_context_dict,
+            }
+
+            vuln_scan_result = yield context.call_sub_orchestrator(
+                "vulnerability_scan_orchestrator",
+                vuln_scan_input
+            )
+            
+            if not vuln_scan_result or vuln_scan_result.get("status") != "completed":
+                error_msg = f"Vulnerability scan failed or did not complete. Result: {vuln_scan_result}"
+                logging.error(error_msg)
+                return {"success": False, "error": error_msg}
 
         logging.info(f"=== MAIN ORCHESTRATOR COMPLETED SUCCESSFULLY ===")
         
         return {
             "success": True,
-            "scan_id": scan_id,
+            "enum_scan_id": enum_scan_id,
+            "vuln_scan_id": vuln_scan_id,
             "domain": domain,
             "user_id": user_id,
             "results": {
-                "task_pipeline": task_pipeline_result
+                "enumeration_scan": enum_scan_result,
+                "vulnerability_scan": vuln_scan_result
             }
         }
         

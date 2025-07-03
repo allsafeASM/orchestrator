@@ -22,7 +22,7 @@ def task_pipeline_orchestrator(context: df.DurableOrchestrationContext):
         # Get task sequence - either from input or use default
         task_sequence = get_default_scan_sequence()
         
-        logging.info(f"Pipeline config: scan_id={scan_context.scan_id}, domain={scan_context.domain}, tasks={task_sequence}")
+        logging.info(f"Pipeline config: enum_scan_id={scan_context.enum_scan_id}, vuln_scan_id={scan_context.vuln_scan_id}, domain={scan_context.domain}, tasks={task_sequence}")
         
         # Get configurations for all tasks
         task_configs = get_task_sequence(task_sequence)
@@ -38,18 +38,33 @@ def task_pipeline_orchestrator(context: df.DurableOrchestrationContext):
             logging.info(f"Starting task {i+1}/{len(task_configs)}: {task_name}")
             
             # Update status before running the task
-            yield context.call_activity(
-                "update_enumeration_scan_status",
-                {
-                    "enumeration_scan_id": scan_context.scan_id,
-                    "status": status_description
-                }
-            )
+            if task_name == "nuclei":
+                # Update vulnerability scan status for nuclei task
+                yield context.call_activity(
+                    "update_vulnerability_scan_status",
+                    {
+                        "vulnerability_scan_id": scan_context.vuln_scan_id,
+                        "status": status_description
+                    }
+                )
+            else:
+                # Update enumeration scan status for other tasks
+                yield context.call_activity(
+                    "update_enumeration_scan_status",
+                    {
+                        "enumeration_scan_id": scan_context.enum_scan_id,
+                        "status": status_description
+                    }
+                )
             
             # Create task-specific configuration with scan context
+            if task_name == "nuclei":
+                scan_id = scan_context.vuln_scan_id
+            else:
+                scan_id = scan_context.enum_scan_id
             task_execution_config = {
                 "scan_context": scan_context.to_dict(),
-                "instance_id": f"{parent_instance_id}-{scan_context.scan_id}-{task_name}",
+                "instance_id": f"{parent_instance_id}-{scan_id}-{task_name}",
                 "task": task_name,
                 "task_index": i,
                 "total_tasks": len(task_configs)
@@ -58,8 +73,9 @@ def task_pipeline_orchestrator(context: df.DurableOrchestrationContext):
             # Use prepared input from previous task - but only if it's not the first task
             if i > 0:  # Only set input_blob_path for tasks after the first one
                 # Use the prepared input path: scans/domain-scan_id/task/in/input.txt
-                task_execution_config["input_blob_path"] = f"scans/{scan_context.domain}-{scan_context.scan_id}/{task_name}/in/input.txt"
-                logging.info(f"Task {task_name} will use prepared input: {task_execution_config['input_blob_path']}")
+
+                task_execution_config["input_blob_path"] = f"scans/{scan_context.domain}-{scan_id}/{task_name}/in/input.txt"
+                logging.info(msg=f"Task {task_name} will use prepared input: {task_execution_config['input_blob_path']}")
             else:
                 logging.info(f"Task {task_name} is the first task, no input required")
         
@@ -87,8 +103,8 @@ def task_pipeline_orchestrator(context: df.DurableOrchestrationContext):
 
 
         # After all tasks are done, store the final enumeration scan results
-        httpx_blob_path = f"scans/{scan_context.domain}-{scan_context.scan_id}/httpx/out/final_out.json"
-        dns_resolve_blob_path = f"scans/{scan_context.domain}-{scan_context.scan_id}/dns_resolve/out/final_out.json"
+        httpx_blob_path = f"scans/{scan_context.domain}-{scan_context.enum_scan_id}/httpx/out/final_out.json"
+        dns_resolve_blob_path = f"scans/{scan_context.domain}-{scan_context.enum_scan_id}/dns_resolve/out/final_out.json"
 
         yield context.call_activity(
             "save_enumeration_scan_results",
@@ -99,11 +115,23 @@ def task_pipeline_orchestrator(context: df.DurableOrchestrationContext):
             }
         )
 
+        # Store vulnerability scan results (nuclei output)
+        nuclei_blob_path = f"scans/{scan_context.domain}-{scan_context.vuln_scan_id}/nuclei/out/final_out.json"
+
+        yield context.call_activity(
+            "save_vulnerability_scan_results",
+            {
+                "scan_context": scan_context.to_dict(),
+                "nuclei_blob_path": nuclei_blob_path
+            }
+        )
+
 
 
         # Create final pipeline summary
         pipeline_summary = {
-            "scan_id": scan_context.scan_id,
+            "enum_scan_id": scan_context.enum_scan_id,
+            "vuln_scan_id": scan_context.vuln_scan_id,
             "domain": scan_context.domain,
             "status": "completed",
             "total_tasks": len(task_configs),
@@ -113,10 +141,15 @@ def task_pipeline_orchestrator(context: df.DurableOrchestrationContext):
         
         logging.info(f"=== TASK PIPELINE ORCHESTRATOR COMPLETED === {pipeline_summary}")
 
-        # After all done
+        # After all done - update both scan statuses
         yield context.call_activity(
             "update_enumeration_scan_status",
-            {"enumeration_scan_id": scan_context.scan_id, "status": "Completed"}
+            {"enumeration_scan_id": scan_context.enum_scan_id, "status": "Completed"}
+        )
+        
+        yield context.call_activity(
+            "update_vulnerability_scan_status",
+            {"vulnerability_scan_id": scan_context.vuln_scan_id, "status": "Completed"}
         )
 
         return pipeline_summary

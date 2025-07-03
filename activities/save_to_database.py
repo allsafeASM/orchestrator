@@ -69,6 +69,8 @@ async def save_task_results(scan_context: ScanContext, task: str, output_data: a
             await save_dns_resolve_results(scan_context, output_data, db_manager)
         elif task == "port_scan":
             await save_port_scan_results(scan_context, output_data, db_manager)
+        elif task == "nuclei":
+            await save_nuclei_results(scan_context, output_data, db_manager)
         else:
             logging.warning(f"Database save not implemented for task: {task}")
     except Exception as e:
@@ -180,4 +182,33 @@ async def save_port_scan_results(scan_context: ScanContext, port_scan_data: Dict
             
     except Exception as e:
         logging.error(f"Failed to save port scan results: {str(e)}")
+        raise
+
+async def save_nuclei_results(scan_context: ScanContext, nuclei_output: List[Dict], db_manager):
+    """Save nuclei vulnerability scan results to database"""
+    try:
+        # Use the correct async method from DatabaseManager
+        result = await db_manager.store_vulnerability_scan_results(
+            vulnerability_scan_id=scan_context.vuln_scan_id,
+            nuclei_output=nuclei_output
+        )
+        
+        if result.get("success"):
+            logging.info(f"Saved nuclei results: {result.get('inserted', 0)} vulnerabilities")
+            
+            # Update vulnerability scan summary
+            summary_update = await db_manager.update_vulnerability_scan_summary(
+                vulnerability_scan_id=scan_context.vuln_scan_id,
+                total_vulnerabilities=result.get('inserted', 0)
+            )
+            if summary_update.get("success"):
+                logging.info(f"Updated vulnerability scan summary for id={scan_context.vuln_scan_id}: total_vulnerabilities={result.get('inserted', 0)}")
+            else:
+                logging.error(f"Failed to update vulnerability scan summary: {summary_update.get('error')}")
+        else:
+            logging.error(f"Failed to save nuclei results: {result.get('error', 'Unknown error')}")
+            raise Exception(f"Database operation failed: {result.get('error')}")
+            
+    except Exception as e:
+        logging.error(f"Failed to save nuclei results: {str(e)}")
         raise

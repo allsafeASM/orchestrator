@@ -99,10 +99,7 @@ TASK_REGISTRY = {
         input_blob_path="httpx",  # Uses prepared input from httpx task
         output_format="json",
         timeout_minutes=90,
-        retry_count=1,
-        severity="low,medium,high,critical",  # Task-specific parameter
-        templates="cves,vulnerabilities,misconfiguration",
-        split_threshold=30,
+        split_threshold=5,
         prepare_next_input=False  # nuclei is the last task
     )
 }
@@ -117,7 +114,7 @@ def get_task_sequence(task_names: List[str]) -> List[TaskConfig]:
 
 def get_default_scan_sequence() -> List[str]:
     """Get the default sequence of tasks for a complete scan"""
-    return ["subfinder", "dns_resolve", "port_scan", "httpx"]
+    return ["subfinder", "dns_resolve", "port_scan", "httpx", "nuclei"]
 
 def add_task_config(task_name: str, config: TaskConfig):
     """Add a new task configuration to the registry"""

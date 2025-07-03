@@ -17,7 +17,7 @@ async def validate_domain(payload: dict):
     {
         "scan_context": {
             "scan_id": "scan_123",
-            "domain": "example.com",
+        "domain": "example.com",
             "domain_id": null,
             "user_id": 123
         }
@@ -64,7 +64,7 @@ async def validate_domain(payload: dict):
             }
         
         logging.info(f"Domain '{domain}' validated successfully for user {user_id}. Domain ID: {domain_id}")
-        
+     
         return {
             "valid": True,
             "domain_id": domain_id,

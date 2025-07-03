@@ -3,7 +3,9 @@ import azure.functions as func
 import azure.durable_functions as df
 
 from orchestrators.main_orchestrator import app as main_orchestrator_blueprint
-from orchestrators.task_pipeline_orchestrator import app as task_pipeline_orchestrator_blueprint
+from orchestrators.enumeration_scan_orchestrator import app as enumeration_scan_orchestrator_blueprint
+from orchestrators.vulnerability_scan_orchestrator import app as vulnerability_scan_orchestrator_blueprint
+from orchestrators.nuclei_progress_orchestrator import app as nuclei_progress_orchestrator_blueprint
 from orchestrators.tool_stage_orchestrator import app as tool_stage_orchestrator_blueprint
 
 from activities.prepare_scan_messages import app as prepare_scan_messages_blueprint
@@ -13,11 +15,16 @@ from activities.save_to_database import app as save_to_database_blueprint
 from activities.validate_domain import app as validate_domain_blueprint
 from activities.save_enumeration_scan_results import app as save_enumeration_scan_results_blueprint
 from activities.update_enumeration_scan_status import app as update_enumeration_scan_status_blueprint
+from activities.save_vulnerability_scan_results import app as save_vulnerability_scan_results_blueprint
+from activities.update_vulnerability_scan_status import app as update_vulnerability_scan_status_blueprint
+from activities.update_vulnerability_scan_progress import app as update_vulnerability_scan_progress_blueprint
 app = func.FunctionApp()
 
 # Register all blueprints using the correct v2 method
 app.register_blueprint(main_orchestrator_blueprint)
-app.register_blueprint(task_pipeline_orchestrator_blueprint)
+app.register_blueprint(enumeration_scan_orchestrator_blueprint)
+app.register_blueprint(vulnerability_scan_orchestrator_blueprint)
+app.register_blueprint(nuclei_progress_orchestrator_blueprint)
 app.register_blueprint(tool_stage_orchestrator_blueprint)
 app.register_blueprint(prepare_scan_messages_blueprint)
 app.register_blueprint(send_messages_to_queue_blueprint)
@@ -26,6 +33,9 @@ app.register_blueprint(save_to_database_blueprint)
 app.register_blueprint(validate_domain_blueprint)
 app.register_blueprint(save_enumeration_scan_results_blueprint)
 app.register_blueprint(update_enumeration_scan_status_blueprint)
+app.register_blueprint(save_vulnerability_scan_results_blueprint)
+app.register_blueprint(update_vulnerability_scan_status_blueprint)
+app.register_blueprint(update_vulnerability_scan_progress_blueprint)
 
 # HTTP trigger to start the orchestration
 @app.route(route="orchestrators/start_scan", methods=["POST"])

@@ -35,7 +35,7 @@ async def save_enumeration_scan_results(payload: dict):
 
         db_manager = DatabaseManager()
         result = await db_manager.store_enumeration_scan_results(
-            enumeration_scan_id=scan_context["scan_id"],
+            enumeration_scan_id=scan_context["enum_scan_id"],
             httpx_output=httpx_output,
             dns_resolve_output=dns_output
         )
@@ -44,11 +44,11 @@ async def save_enumeration_scan_results(payload: dict):
         if result.get("success"):
             total_assets = result.get("inserted", 0)
             summary_update = await db_manager.update_enumeration_scan_summary(
-                enumeration_scan_id=scan_context["scan_id"],
+                enumeration_scan_id=scan_context["enum_scan_id"],
                 total_assets=total_assets
             )
             if summary_update.get("success"):
-                logging.info(f"Updated enumeration scan summary for id={scan_context['scan_id']}: total_assets={total_assets}")
+                logging.info(f"Updated enumeration scan summary for id={scan_context['enum_scan_id']}: total_assets={total_assets}")
             else:
                 logging.error(f"Failed to update enumeration scan summary: {summary_update.get('error')}")
         return result

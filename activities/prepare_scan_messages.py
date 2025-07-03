@@ -1,3 +1,4 @@
+from email.mime import base
 import logging
 import json
 import os
@@ -63,7 +64,7 @@ def read_txt_input(blob_path: str) -> List[str]:
         raise ValueError(f"Failed to read blob {blob_path}: {str(e)}")
 
 def save_chunk_to_blob(chunk_data: List[str], scan_context: ScanContext, task_name: str, 
-                       chunk_index: int, connection_string: str) -> str:
+                       chunk_index: int, connection_string: str, type = None) -> str:
     """Save a chunk of targets to blob storage as .txt file"""
     blob_service_client = BlobServiceClient.from_connection_string(connection_string)
     container_name = "scans"
@@ -76,7 +77,7 @@ def save_chunk_to_blob(chunk_data: List[str], scan_context: ScanContext, task_na
     
     # Save as simple .txt file with one target per line
     chunk_content = '\n'.join(chunk_data)
-    blob_name = scan_context.get_chunk_path(task_name, chunk_index)
+    blob_name = scan_context.get_chunk_path(task_name, chunk_index, type=type)
     blob_client = container_client.get_blob_client(blob_name)
     blob_client.upload_blob(chunk_content, overwrite=True)
     
@@ -91,15 +92,16 @@ async def prepare_scan_messages(config: dict):
         input_blob_path = config.get("input_blob_path")
         split_threshold = config.get("split_threshold")
         
-        logging.info(f"Config: scan_id={scan_context.scan_id}, task={task}, domain={scan_context.domain}")
+        logging.info(f"Config: enum_scan_id={scan_context.enum_scan_id}, vuln_scan_id={scan_context.vuln_scan_id}, task={task}, domain={scan_context.domain}")
         logging.info(f"Input blob path: {input_blob_path}, Split threshold: {split_threshold}")
         
         # Create base message with flattened scan_context
         base_message = {
             # Flatten scan_context keys into main object
-            "scan_id": scan_context.scan_id,
+            "scan_id": scan_context.vuln_scan_id if task == 'nuclei' else scan_context.enum_scan_id,
             "domain": scan_context.domain,
             "task": task,
+            "type": config.get("type", None),
             "instance_id": config.get("instance_id"),
             "input_blob_path": input_blob_path,
             "output_format": config.get("output_format", "json"),
@@ -141,7 +143,7 @@ async def prepare_scan_messages(config: dict):
         for i, chunk in enumerate(chunks):
             # Save chunk to blob
             chunk_blob_path = save_chunk_to_blob(
-                chunk, scan_context, task, i, connection_string
+                chunk, scan_context, task, i, connection_string, type=base_message["type"]
             )
             
             # Create message with modified config (flattened)

@@ -1040,6 +1040,34 @@ class DatabaseManager:
         if self.pool:
             await self.pool.close()
 
+    def _sanitize_string(self, value: any) -> str:
+        """
+        Sanitize string values to prevent encoding issues.
+        Removes null bytes and other problematic characters.
+        """
+        if value is None:
+            return ""
+        
+        if not isinstance(value, str):
+            try:
+                value = str(value)
+            except:
+                return ""
+        
+        # Remove null bytes and other problematic characters
+        # Replace null bytes with empty string
+        value = value.replace('\x00', '')
+        
+        # Remove other control characters that might cause issues
+        import re
+        value = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', value)
+        
+        # Limit length to prevent database issues
+        if len(value) > 10000:  # Limit to 10KB
+            value = value[:10000] + "... [truncated]"
+        
+        return value
+
     async def store_enumeration_scan_results(
         self,
         enumeration_scan_id: int,
@@ -1166,5 +1194,176 @@ class DatabaseManager:
             return {"success": True}
         except Exception as e:
             logging.error(f"Failed to update enumeration scan summary: {str(e)}")
+            logging.error(traceback.format_exc())
+            return {"success": False, "error": str(e)}
+
+    # ==================== VULNERABILITY SCAN OPERATIONS ====================
+
+    async def store_vulnerability_scan_results(
+        self,
+        vulnerability_scan_id: int,
+        nuclei_output: list
+    ) -> dict:
+        """
+        Store aggregated nuclei vulnerability scan results in vulnerability_scan_results table.
+        
+        Args:
+            vulnerability_scan_id: ID of the vulnerability scan
+            nuclei_output: List of nuclei findings from aggregated output
+            
+        Returns:
+            Dict with success status and number of inserted records
+        """
+        try:
+            conn = await self._get_connection()
+            current_time = datetime.utcnow()
+
+            insert_data = []
+            for finding in nuclei_output:
+                if not isinstance(finding, dict):
+                    logging.warning(f"Skipping non-dict finding: {type(finding)}")
+                    continue
+                
+                try:
+                    # Extract fields from nuclei finding with sanitization
+                    severity = self._sanitize_string(finding.get("severity", "info"))
+                    host = self._sanitize_string(finding.get("host", ""))
+                    name = self._sanitize_string(finding.get("name", ""))
+                    reference = finding.get("reference", [])
+                    description = self._sanitize_string(finding.get("description", ""))
+                    matched_at = self._sanitize_string(finding.get("matched_at", ""))
+                    type_val = self._sanitize_string(finding.get("type", ""))
+                    request = self._sanitize_string(finding.get("request", ""))
+                    response = self._sanitize_string(finding.get("response", ""))
+                    template = self._sanitize_string(finding.get("template_id", ""))
+                    cve_id = self._sanitize_string(finding.get("cve_id", ""))
+                    cvss_score = finding.get("cvss_score", None)
+                    
+                    # Handle additional fields that might be present
+                    if not cve_id:
+                        cve_id = self._sanitize_string(finding.get("cve-id", ""))  # Alternative field name
+                    if not cvss_score:
+                        cvss_score = finding.get("cvss", None)  # Alternative field name
+                    
+                    # Convert reference list to JSON string with sanitization
+                    if isinstance(reference, list):
+                        # Sanitize each reference string
+                        sanitized_references = [self._sanitize_string(ref) for ref in reference if ref]
+                        reference_json = json.dumps(sanitized_references)
+                    else:
+                        reference_json = json.dumps([self._sanitize_string(reference)])
+                    
+                    # Handle CVSS score - convert to float if possible
+                    if cvss_score is not None:
+                        try:
+                            cvss_score = float(cvss_score)
+                        except (ValueError, TypeError):
+                            cvss_score = None
+
+                    insert_data.append((
+                        vulnerability_scan_id,
+                        severity,
+                        host,
+                        name,
+                        reference_json,
+                        description,
+                        matched_at,
+                        type_val,
+                        request,
+                        response,
+                        template,
+                        cve_id,
+                        cvss_score,
+                        current_time,
+                        current_time
+                    ))
+                except Exception as e:
+                    logging.error(f"Failed to process nuclei finding: {str(e)}")
+                    logging.error(f"Finding data: {finding}")
+                    continue
+
+            if insert_data:
+                await conn.executemany(
+                    """
+                    INSERT INTO vulnerability_scan_results (
+                        vulnerability_scan_id, severity, host, name, reference, description, 
+                        matched_at, type, request, response, template, cve_id, cvss_score, 
+                        created_at, updated_at
+                    ) VALUES (
+                        $1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+                    )
+                    """,
+                    insert_data
+                )
+
+            await self._release_connection(conn)
+            return {"success": True, "inserted": len(insert_data)}
+        except Exception as e:
+            logging.error(f"Failed to store vulnerability scan results: {str(e)}")
+            logging.error(traceback.format_exc())
+            return {"success": False, "error": str(e)}
+
+    async def update_vulnerability_scan_status(self, vulnerability_scan_id: int, status: str) -> dict:
+        """
+        Update the status of a vulnerability scan.
+        """
+        try:
+            conn = await self._get_connection()
+            await conn.execute(
+                """
+                UPDATE vulnerability_scans
+                SET status = $1, updated_at = NOW()
+                WHERE id = $2
+                """,
+                status, vulnerability_scan_id
+            )
+            await self._release_connection(conn)
+            return {"success": True}
+        except Exception as e:
+            logging.error(f"Failed to update vulnerability scan status: {str(e)}")
+            logging.error(traceback.format_exc())
+            return {"success": False, "error": str(e)}
+
+    async def update_vulnerability_scan_progress(self, vulnerability_scan_id: int, progress: int) -> dict:
+        """
+        Update the progress of a vulnerability scan.
+        """
+        try:
+            conn = await self._get_connection()
+            await conn.execute(
+                """
+                UPDATE vulnerability_scans
+                SET progress = $1, updated_at = NOW()
+                WHERE id = $2
+                """,
+                progress, vulnerability_scan_id
+            )
+            await self._release_connection(conn)
+            return {"success": True}
+        except Exception as e:
+            logging.error(f"Failed to update vulnerability scan progress: {str(e)}")
+            logging.error(traceback.format_exc())
+            return {"success": False, "error": str(e)}
+
+    async def update_vulnerability_scan_summary(self, vulnerability_scan_id: int, total_vulnerabilities: int) -> dict:
+        """
+        Update total_vulnerabilities and scan_time_elapsed for a vulnerability scan.
+        """
+        try:
+            conn = await self._get_connection()
+            # Calculate scan_time_elapsed as the difference between now and created_at
+            await conn.execute(
+                """
+                UPDATE vulnerability_scans
+                SET total_vulnerabilities = $1,
+                    scan_time_elapsed = EXTRACT(EPOCH FROM (NOW() - created_at))
+                WHERE id = $2
+                """,
+                total_vulnerabilities, vulnerability_scan_id
+            )
+            await self._release_connection(conn)
+            return {"success": True}
+        except Exception as e:
+            logging.error(f"Failed to update vulnerability scan summary: {str(e)}")
             logging.error(traceback.format_exc())
             return {"success": False, "error": str(e)} 
